@@ -3,7 +3,7 @@
 import sys, asyncio
 from browser_use import Agent, Browser, BrowserConfig
 from langchain_openai import ChatOpenAI
-import os
+from dotenv import load_dotenv
 
 # 브라우저 인스턴스 전역 설정
 browser = None
@@ -14,7 +14,7 @@ async def run_agent(task):
     global browser, browser_context
     
     # API 키 설정
-    os.environ['OPENAI_API_KEY'] = 'sk-'  
+    load_dotenv()  # .env 파일에서 환경 변수 로드
     
     # 첫 실행시에만 브라우저 초기화
     if browser is None:

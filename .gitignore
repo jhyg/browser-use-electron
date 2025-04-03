@@ -1,0 +1,11 @@
+# 노드 모듈 제외
+node_modules/
+# 로그 파일
+*.log
+# 개발 환경 파일
+.env
+.DS_Store
+# Electron 관련 대용량 파일
+**/dist/
+**/build/
+**/out/

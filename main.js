@@ -26,8 +26,15 @@ function createWindow() {
   // 메인 창 로드
   mainWindow.loadFile('index.html');
 
-  // Python 백엔드 프로세스 실행
-  pyProc = spawn('python3', ['-u', 'agent_backend.py']);
+  // Python 백엔드 프로세스 실행 (UTF-8 인코딩 강제)
+  pyProc = spawn('python', ['-u', 'agent_backend.py'], {
+    env: {
+      ...process.env,
+      PYTHONIOENCODING: 'utf-8',
+      PYTHONUNBUFFERED: '1',
+      PYTHONUTF8: '1'
+    }
+  });
 
   // Python stdout 수신하여 renderer에 결과 전달
   pyProc.stdout.on('data', (data) => {

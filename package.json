@@ -11,7 +11,9 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "electron": "^35.1.2"
+    "cors": "^2.8.5",
+    "electron": "^35.1.2",
+    "express": "^5.1.0"
   },
   "devDependencies": {
     "electron-rebuild": "^3.2.9"

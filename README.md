@@ -8,5 +8,10 @@
 ## Usage
 Follow the application instructions to use the browser agent.
 
+
+pip install -e .
+pip install langchain-openai
+python -m playwright install
+
 npm i
 npm start

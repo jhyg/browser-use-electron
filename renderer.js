@@ -39,8 +39,18 @@ window.onload = function() {
 
   // Python 에이전트로부터 결과 수신하여 출력
   ipcRenderer.on('agentResult', (event, data) => {
+    // 상태 업데이트 확인
+    if (data.includes("Agent ready. Please enter commands.")) {
+      connectionStatus.textContent = "상태: 연결됨";
+      sendBtn.disabled = false;
+      appendToOutput(`<div class="log-entry info">${formatOutput(data)}</div>`);
+    }
+    else if (data.includes("Browser initialization complete")) {
+      connectionStatus.textContent = "상태: 브라우저 준비됨";
+      appendToOutput(`<div class="log-entry info">${formatOutput(data)}</div>`);
+    }
     // END_OF_TASK 마커 확인
-    if (data.includes("<END_OF_TASK>")) {
+    else if (data.includes("<END_OF_TASK>")) {
       taskStatus.textContent = "작업: 완료";
       sendBtn.disabled = false;
       
@@ -52,7 +62,7 @@ window.onload = function() {
       }
     } 
     // 에러 확인
-    else if (data.startsWith("ERROR:") || data.includes("에이전트 실행 오류")) {
+    else if (data.startsWith("ERROR:") || data.includes("Agent execution error")) {
       taskStatus.textContent = "작업: 오류 발생";
       sendBtn.disabled = false;
       appendToOutput(`<div class="log-entry error">${formatOutput(data)}</div>`);
@@ -60,17 +70,6 @@ window.onload = function() {
     // 일반 결과
     else if (data.trim()) {
       appendToOutput(`<div class="log-entry">${formatOutput(data)}</div>`);
-    }
-  });
-  
-  // 에이전트 준비 메시지가 오면 상태 업데이트
-  ipcRenderer.on('agentResult', (event, data) => {
-    if (data.includes("에이전트 준비 완료")) {
-      connectionStatus.textContent = "상태: 연결됨";
-      sendBtn.disabled = false;
-    }
-    else if (data.includes("브라우저 초기화 완료")) {
-      connectionStatus.textContent = "상태: 브라우저 준비됨";
     }
   });
   

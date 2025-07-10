@@ -18,3 +18,6 @@ langchain-core>=0.3.35
 # LLM 모델 의존성
 langchain>=0.3.18
 langchain-openai==0.3.1 
+
+# PyInstaller for exe build
+pyinstaller>=6.5.0 

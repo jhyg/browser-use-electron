@@ -1,21 +1,24 @@
 {
-  "name": "electron-playwright",
+  "name": "browser-use-agent",
   "version": "1.0.0",
-  "description": "Electron app with browser-use integration",
+  "description": "Browser-Use Agent - Background service for process-gpt.io",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
+    "build": "electron-packager . browser-use-agent --platform=win32 --arch=x64 --out=dist --overwrite",
+    "build:win": "electron-packager . browser-use-agent --platform=win32 --arch=x64 --out=dist --overwrite",
+    "build:mac": "electron-packager . browser-use-agent --platform=darwin --arch=x64 --out=dist --overwrite",
+    "build:linux": "electron-packager . browser-use-agent --platform=linux --arch=x64 --out=dist --overwrite",
+    "dist": "electron-packager . browser-use-agent --platform=win32 --arch=x64 --out=dist --overwrite",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "keywords": ["browser-use", "agent", "automation", "process-gpt"],
+  "author": "Process-GPT",
+  "license": "MIT",
   "dependencies": {
-    "cors": "^2.8.5",
-    "electron": "^35.1.2",
-    "express": "^5.1.0"
   },
   "devDependencies": {
-    "electron-rebuild": "^3.2.9"
+    "electron": "^35.1.2",
+    "electron-packager": "^17.1.1"
   }
 }

@@ -169,9 +169,131 @@ async def run_agent(task: str):
         print(f"Agent execution error: {str(e)}")
         return f"Error: {str(e)}"
 
+async def check_and_install_playwright():
+    """Playwright 브라우저 설치 확인 및 설치"""
+    try:
+        import subprocess
+        import os
+        from pathlib import Path
+        import glob
+        
+        print("Checking Playwright browsers...", flush=True)
+        
+        # 고정된 브라우저 설치 경로 설정
+        browser_path = Path.home() / ".browser-use-agent" / "browsers"
+        browser_path.mkdir(parents=True, exist_ok=True)
+        
+        # PLAYWRIGHT_BROWSERS_PATH 환경 변수 설정
+        os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(browser_path)
+        
+        # 모든 브라우저 종류 확인 (chromium, firefox, webkit 포함)
+        browser_found = False
+        
+        # 가능한 모든 브라우저 패턴 확인
+        patterns = [
+            "chromium-*/chrome-win/chrome.exe",
+            "chromium-*/chrome-win/chrome.exe",
+            "firefox-*/firefox.exe",
+            "webkit-*/Playwright.exe",
+            "winldd-*/PrintDeps.exe",  # winldd 브라우저 추가
+        ]
+        
+        for pattern in patterns:
+            matches = glob.glob(str(browser_path / pattern))
+            if matches:
+                browser_found = True
+                print(f"✅ Found browser: {matches[0]}", flush=True)
+                break
+        
+        if not browser_found:
+            print("Installing Playwright browsers (this may take a few minutes)...", flush=True)
+            print(f"Browser installation path: {browser_path}", flush=True)
+            
+            # Playwright의 Python API를 사용해서 브라우저 설치
+            try:
+                from playwright._impl._driver import compute_driver_executable, get_driver_env
+                from playwright._impl._api_types import BrowserType
+                
+                # Playwright 설치 시도
+                install_result = subprocess.run(
+                    [sys.executable, "-m", "playwright", "install"],
+                    capture_output=True,
+                    text=True,
+                    timeout=600,  # 10분 제한
+                    env=os.environ.copy()
+                )
+                
+                if install_result.returncode == 0:
+                    print("✅ Playwright browsers installed successfully!", flush=True)
+                else:
+                    print(f"⚠️ Playwright installation warning: {install_result.stderr}", flush=True)
+                    print("Trying alternative installation...", flush=True)
+                    
+                    # 대체 설치 방법 시도
+                    alt_install_result = subprocess.run(
+                        [sys.executable, "-m", "playwright", "install", "chromium"],
+                        capture_output=True,
+                        text=True,
+                        timeout=600,
+                        env=os.environ.copy()
+                    )
+                    
+                    if alt_install_result.returncode == 0:
+                        print("✅ Chromium browser installed successfully!", flush=True)
+                    else:
+                        print("Falling back to system Chrome...", flush=True)
+                        setup_system_chrome()
+                        
+            except Exception as install_error:
+                print(f"⚠️ Browser installation failed: {str(install_error)}", flush=True)
+                print("Falling back to system Chrome...", flush=True)
+                setup_system_chrome()
+        else:
+            print("✅ Playwright browsers already installed", flush=True)
+            
+    except subprocess.TimeoutExpired:
+        print("⚠️ Playwright installation timed out", flush=True)
+        print("Trying system Chrome as fallback...", flush=True)
+        setup_system_chrome()
+    except Exception as e:
+        print(f"⚠️ Playwright setup error: {str(e)}", flush=True)
+        print("Trying system Chrome as fallback...", flush=True)
+        setup_system_chrome()
+
+def setup_system_chrome():
+    """시스템 Chrome 설정"""
+    try:
+        from pathlib import Path
+        import os
+        
+        # 시스템 Chrome 경로 확인
+        system_chrome_paths = [
+            "C:/Program Files/Google/Chrome/Application/chrome.exe",
+            "C:/Program Files (x86)/Google/Chrome/Application/chrome.exe",
+            Path.home() / "AppData/Local/Google/Chrome/Application/chrome.exe"
+        ]
+        
+        for chrome_path in system_chrome_paths:
+            if Path(chrome_path).exists():
+                print(f"✅ Found system Chrome at: {chrome_path}", flush=True)
+                os.environ["PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH"] = str(chrome_path)
+                return True
+        
+        print("⚠️ No system Chrome found, browser functionality may be limited", flush=True)
+        return False
+    except Exception as e:
+        print(f"⚠️ System Chrome setup error: {str(e)}", flush=True)
+        return False
+
 @app.on_event("startup")
 async def startup_event():
-    """서버 시작시 브라우저 초기화"""
+    """서버 시작시 Playwright 설치 확인 및 브라우저 초기화"""
+    print("Starting Browser Agent API Server...", flush=True)
+    
+    # Playwright 브라우저 설치 확인 및 설치
+    await check_and_install_playwright()
+    
+    # 브라우저 초기화
     await init_browser()
     print("Browser Agent API Server is ready!", flush=True)
 

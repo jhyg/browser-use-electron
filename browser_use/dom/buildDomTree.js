@@ -229,6 +229,16 @@
     //   return false;
     // }
 
+    // SVG 내부 요소들은 개별적으로 인터랙티브하지 않음
+    const tagName = element.tagName.toLowerCase();
+    if (tagName === 'g' || tagName === 'rect' || tagName === 'path' || 
+        tagName === 'circle' || tagName === 'ellipse' || tagName === 'line' || 
+        tagName === 'polyline' || tagName === 'polygon' || tagName === 'text' || 
+        tagName === 'tspan' || tagName === 'defs' || tagName === 'clipPath' || 
+        tagName === 'use') {
+      return false; // SVG 내부 요소들은 개별적으로 인터랙티브하지 않음
+    }
+
     // Base interactive elements and roles
     const interactiveElements = new Set([
       "a",
@@ -244,9 +254,7 @@
       "textarea",
       "canvas",
       "summary",
-      "svg",
-      "g",
-      "rect"
+      "svg" // SVG 자체만 인터랙티브로 간주
     ]);
 
     const interactiveRoles = new Set([
@@ -284,12 +292,8 @@
       "button-text-icon-only",
       "dropdown",
       "combobox",
-      "svg",
-      "g",
-      "rect"
+      "svg" // SVG 자체만 인터랙티브로 간주
     ]);
-
-    const tagName = element.tagName.toLowerCase();
     const role = element.getAttribute("role");
     const ariaRole = element.getAttribute("aria-role");
     const tabIndex = element.getAttribute("tabindex");
@@ -309,7 +313,11 @@
         tabIndex !== "-1" &&
         element.parentElement?.tagName.toLowerCase() !== "body") ||
       element.getAttribute("data-action") === "a-dropdown-select" ||
-      element.getAttribute("data-action") === "a-dropdown-button";
+      element.getAttribute("data-action") === "a-dropdown-button" ||
+      // SVG 요소가 클릭 가능한 컨테이너 내부에 있는지 확인
+      (tagName === 'svg' && element.closest('[class*="cursor-pointer"], [class*="clickable"], [onclick], [data-action]')) ||
+      // 부모 요소가 클릭 가능한지 확인
+      element.closest('[class*="cursor-pointer"], [class*="clickable"], [onclick], [data-action]') !== null;
 
     if (hasInteractiveRole) return true;
 
@@ -327,7 +335,14 @@
       element.getAttribute("onclick") !== null ||
       element.hasAttribute("ng-click") ||
       element.hasAttribute("@click") ||
-      element.hasAttribute("v-on:click");
+      element.hasAttribute("v-on:click") ||
+      // Vue.js 이벤트 핸들러 확인
+      element.hasAttribute("data-v-") ||
+      // 일반적인 클릭 관련 클래스 확인
+      element.classList.contains("cursor-pointer") ||
+      element.classList.contains("clickable") ||
+      element.classList.contains("enter-icon") ||
+      element.classList.contains("enter-icon-wrapper");
 
     // Helper function to safely get event listeners
     function getEventListeners(el) {
@@ -415,7 +430,11 @@
       hasClickListeners ||
       // isFormRelated ||
       isDraggable ||
-      isContentEditable
+      isContentEditable ||
+      // SVG 요소가 클릭 가능한 컨테이너 내부에 있는지 추가 확인
+      (tagName === 'svg' && element.closest('[class*="cursor-pointer"], [class*="clickable"], [onclick], [data-action], [data-v-]')) ||
+      // 부모 요소가 클릭 가능한지 추가 확인
+      element.closest('[class*="cursor-pointer"], [class*="clickable"], [onclick], [data-action], [data-v-]') !== null
     );
   }
 
@@ -424,8 +443,28 @@
    */
   function isElementVisible(element) {
     const tagName = element.tagName.toLowerCase();
-    if ((tagName === 'svg' || tagName === 'g' || tagName === 'rect') && element.id) {
-        return true;
+    // SVG 내부 요소들은 개별적으로 가시성을 확인하지 않음
+    if (tagName === 'g' || tagName === 'rect' || tagName === 'path' || 
+        tagName === 'circle' || tagName === 'ellipse' || tagName === 'line' || 
+        tagName === 'polyline' || tagName === 'polygon' || tagName === 'text' || 
+        tagName === 'tspan' || tagName === 'defs' || tagName === 'clipPath' || 
+        tagName === 'use') {
+        return false; // SVG 내부 요소들은 개별적으로 보이지 않음
+    }
+    
+    // SVG 자체는 부모 컨테이너를 기준으로 가시성 확인
+    if (tagName === 'svg') {
+        const parentContainer = element.closest('div, button, a, span');
+        if (parentContainer) {
+            const containerStyle = window.getComputedStyle(parentContainer);
+            return (
+                parentContainer.offsetWidth > 0 &&
+                parentContainer.offsetHeight > 0 &&
+                containerStyle.visibility !== "hidden" &&
+                containerStyle.display !== "none"
+            );
+        }
+        return true; // SVG 자체는 기본적으로 보이는 것으로 간주
     }
 
     const style = window.getComputedStyle(element);
@@ -754,6 +793,32 @@
       const attributeNames = node.getAttributeNames?.() || [];
       for (const name of attributeNames) {
         nodeData.attributes[name] = node.getAttribute(name);
+      }
+      
+      // SVG가 포함된 버튼의 경우 텍스트 정보 통합
+      if (nodeData.tagName === 'svg') {
+        const parentContainer = node.closest('div, button, a, span');
+        if (parentContainer) {
+          // 부모 컨테이너의 텍스트 내용 수집
+          const containerText = parentContainer.textContent?.trim() || '';
+          const containerTitle = parentContainer.getAttribute('title') || '';
+          const containerAriaLabel = parentContainer.getAttribute('aria-label') || '';
+          
+          // 텍스트 정보 통합
+          const combinedText = [containerText, containerTitle, containerAriaLabel]
+            .filter(text => text.length > 0)
+            .join(' | ');
+          
+          if (combinedText) {
+            nodeData.combinedText = combinedText;
+          }
+          
+          // 부모 컨테이너의 클래스 정보도 추가
+          const containerClasses = parentContainer.className || '';
+          if (containerClasses) {
+            nodeData.containerClasses = containerClasses;
+          }
+        }
       }
     }
 

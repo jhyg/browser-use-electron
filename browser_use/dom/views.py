@@ -1,8 +1,9 @@
 from dataclasses import dataclass
 from functools import cached_property
-from typing import TYPE_CHECKING, Dict, List, Optional
+from typing import TYPE_CHECKING, Optional
 
 from browser_use.dom.history_tree_processor.view import CoordinateSet, HashedDomElement, ViewportInfo
+from browser_use.dom.utils import cap_text_length
 from browser_use.utils import time_execution_sync
 
 # Avoid circular import issues
@@ -15,6 +16,9 @@ class DOMBaseNode:
 	is_visible: bool
 	# Use None as default and set parent later to avoid circular reference issues
 	parent: Optional['DOMElementNode']
+
+	def __json__(self) -> dict:
+		raise NotImplementedError('DOMBaseNode is an abstract class')
 
 
 @dataclass(frozen=False)
@@ -42,6 +46,29 @@ class DOMTextNode(DOMBaseNode):
 			return False
 		return self.parent.is_top_element
 
+	def __json__(self) -> dict:
+		return {
+			'text': self.text,
+			'type': self.type,
+		}
+
+
+DEFAULT_INCLUDE_ATTRIBUTES = [
+	'title',
+	'type',
+	'checked',
+	'name',
+	'role',
+	'value',
+	'placeholder',
+	'data-date-format',
+	'alt',
+	'aria-label',
+	'aria-expanded',
+	'data-state',
+	'aria-checked',
+]
+
 
 @dataclass(frozen=False)
 class DOMElementNode(DOMBaseNode):
@@ -52,16 +79,39 @@ class DOMElementNode(DOMBaseNode):
 
 	tag_name: str
 	xpath: str
-	attributes: Dict[str, str]
-	children: List[DOMBaseNode]
+	attributes: dict[str, str]
+	children: list[DOMBaseNode]
 	is_interactive: bool = False
 	is_top_element: bool = False
 	is_in_viewport: bool = False
 	shadow_root: bool = False
-	highlight_index: Optional[int] = None
-	viewport_coordinates: Optional[CoordinateSet] = None
-	page_coordinates: Optional[CoordinateSet] = None
-	viewport_info: Optional[ViewportInfo] = None
+	highlight_index: int | None = None
+	viewport_coordinates: CoordinateSet | None = None
+	page_coordinates: CoordinateSet | None = None
+	viewport_info: ViewportInfo | None = None
+
+	"""
+	### State injected by the browser context.
+
+	The idea is that the clickable elements are sometimes persistent from the previous page -> tells the model which objects are new/_how_ the state has changed
+	"""
+	is_new: bool | None = None
+
+	def __json__(self) -> dict:
+		return {
+			'tag_name': self.tag_name,
+			'xpath': self.xpath,
+			'attributes': self.attributes,
+			'is_visible': self.is_visible,
+			'is_interactive': self.is_interactive,
+			'is_top_element': self.is_top_element,
+			'is_in_viewport': self.is_in_viewport,
+			'shadow_root': self.shadow_root,
+			'highlight_index': self.highlight_index,
+			'viewport_coordinates': self.viewport_coordinates,
+			'page_coordinates': self.page_coordinates,
+			'children': [child.__json__() for child in self.children],
+		}
 
 	def __repr__(self) -> str:
 		tag_str = f'<{self.tag_name}'
@@ -118,131 +168,116 @@ class DOMElementNode(DOMBaseNode):
 		return '\n'.join(text_parts).strip()
 
 	@time_execution_sync('--clickable_elements_to_string')
-	def clickable_elements_to_string(self, include_attributes: list[str] = []) -> str:
+	def clickable_elements_to_string(self, include_attributes: list[str] | None = None) -> str:
+		"""Convert the processed DOM content to HTML."""
 		formatted_text = []
-		
-		def find_icon_class(node: DOMElementNode) -> str:
-			"""재귀적으로 i 태그를 찾아 클래스를 반환"""
-			if node.tag_name == 'i':
-				return node.attributes.get('class', '')
-			
-			for child in node.children:
-				if isinstance(child, DOMElementNode):
-					icon_class = find_icon_class(child)
-					if icon_class:
-						return icon_class
-			return ''
-		
+
+		if not include_attributes:
+			include_attributes = DEFAULT_INCLUDE_ATTRIBUTES
+
 		def process_node(node: DOMBaseNode, depth: int) -> None:
+			next_depth = int(depth)
+			depth_str = depth * '\t'
+
 			if isinstance(node, DOMElementNode):
+				# Add element with highlight_index
 				if node.highlight_index is not None:
-					attributes_str = ''
-					
-					# 이미지 태그 처리
-					if node.tag_name == 'img':
-						src = node.attributes.get('src', '')
-						attributes_str = f' src="{src}"'
-					
-					# g 태그 처리 (생성된 노드 그룹)
-					elif node.tag_name == 'g':
-						node_id = node.attributes.get('id', '')
-						# g 태그 내의 모든 text 내용 찾기
-						type_text = ''
-						label_text = ''
-						for child in node.children:
-							if isinstance(child, DOMElementNode) and child.tag_name == 'text':
-								text_content = child.get_all_text_till_next_clickable_element().strip()
-								if '<<' in text_content:  # type 텍스트
-									type_text = text_content.replace('<<', '').replace('>>', '').strip()
-								else:  # 라벨 텍스트
-									label_text = text_content
-						
-						if type_text or label_text:
-							attributes_str = f' id="{node_id}"'
-							if type_text:
-								attributes_str += f' type="{type_text}"'
-							if label_text:
-								attributes_str += f' label="{label_text}"'
+					next_depth += 1
 
-					# rect 태그 처리 추가
-					elif node.tag_name == 'rect':
-						node_id = node.attributes.get('id', '')
-						x = node.attributes.get('x', '')
-						y = node.attributes.get('y', '')
-						attributes_str = f' id="{node_id}"'
-						if x and y:
-							attributes_str += f' x="{x}" y="{y}"'
-					
-					# 버튼 태그 처리
-					elif node.tag_name == 'button':
-						icon_class = find_icon_class(node)
-						if icon_class:
-							attributes_str += f' icon="{icon_class}"'
-					
-					# input 태그 처리
-					elif node.tag_name == 'input':
-						input_id = node.attributes.get('id', '')
-						input_type = node.attributes.get('type', '')
-						# 상위 label 찾기
-						parent = node.parent
-						while parent:
-							for child in parent.children:
-								if (isinstance(child, DOMElementNode) and 
-									child.tag_name == 'label' and 
-									child.attributes.get('for') == input_id):
-									label_text = child.get_all_text_till_next_clickable_element()
-									attributes_str = f' label="{label_text}"'
-									break
-							if attributes_str:
-								break
-							parent = parent.parent
-					
-					# 다른 요청된 속성들 추가
+					text = node.get_all_text_till_next_clickable_element()
+					attributes_html_str = None
 					if include_attributes:
-						attributes_str += ' ' + ' '.join(
-							f'{key}="{value}"' 
-							for key, value in node.attributes.items() 
-							if key in include_attributes
-						)
-					
-					element_text = f'[{node.highlight_index}]<{node.tag_name}{attributes_str}>'
-					formatted_text.append(element_text)
+						attributes_to_include = {
+							key: str(value).strip()
+							for key, value in node.attributes.items()
+							if key in include_attributes and str(value).strip() != ''
+						}
 
+						# If value of any of the attributes is the same as ANY other value attribute only include the one that appears first in include_attributes
+						# WARNING: heavy vibes, but it seems good enough for saving tokens (it kicks in hard when it's long text)
+
+						# Pre-compute ordered keys that exist in both lists (faster than repeated lookups)
+						ordered_keys = [key for key in include_attributes if key in attributes_to_include]
+
+						if len(ordered_keys) > 1:  # Only process if we have multiple attributes
+							keys_to_remove = set()  # Use set for O(1) lookups
+							seen_values = {}  # value -> first_key_with_this_value
+
+							for key in ordered_keys:
+								value = attributes_to_include[key]
+								if len(value) > 5:  # to not remove false, true, etc
+									if value in seen_values:
+										# This value was already seen with an earlier key, so remove this key
+										keys_to_remove.add(key)
+									else:
+										# First time seeing this value, record it
+										seen_values[value] = key
+
+							# Remove duplicate keys (no need to check existence since we know they exist)
+							for key in keys_to_remove:
+								del attributes_to_include[key]
+
+						# Easy LLM optimizations
+						# if tag == role attribute, don't include it
+						if node.tag_name == attributes_to_include.get('role'):
+							del attributes_to_include['role']
+
+						# Remove attributes that duplicate the node's text content
+						attrs_to_remove_if_text_matches = ['aria-label', 'placeholder', 'title']
+						for attr in attrs_to_remove_if_text_matches:
+							if (
+								attributes_to_include.get(attr)
+								and attributes_to_include.get(attr, '').strip().lower() == text.strip().lower()
+							):
+								del attributes_to_include[attr]
+
+						if attributes_to_include.items():
+							# Format as key1='value1' key2='value2'
+							attributes_html_str = ' '.join(
+								f'{key}={cap_text_length(value, 15)}' for key, value in attributes_to_include.items()
+							)
+
+					# Build the line
+					if node.is_new:
+						highlight_indicator = f'*[{node.highlight_index}]'
+
+					else:
+						highlight_indicator = f'[{node.highlight_index}]'
+
+					line = f'{depth_str}{highlight_indicator}<{node.tag_name}'
+
+					if attributes_html_str:
+						line += f' {attributes_html_str}'
+
+					if text:
+						# Add space before >text only if there were NO attributes added before
+						text = text.strip()
+						if not attributes_html_str:
+							line += ' '
+						line += f'>{text}'
+
+					# Add space before /> only if neither attributes NOR text were added
+					elif not attributes_html_str:
+						line += ' '
+
+					# makes sense to have if the website has lots of text -> so the LLM knows which things are part of the same clickable element and which are not
+					line += ' />'  # 1 token
+					formatted_text.append(line)
+
+				# Process children regardless
 				for child in node.children:
-					process_node(child, depth + 1)
+					process_node(child, next_depth)
+
 			elif isinstance(node, DOMTextNode):
-				if not node.has_parent_with_highlight_index() and node.is_parent_top_element() and node.is_visible:
-					formatted_text.append(f'[]{node.text}')
+				# Add text only if it doesn't have a highlighted parent
+				if node.has_parent_with_highlight_index():
+					return
+
+				if node.parent and node.parent.is_visible and node.parent.is_top_element:
+					formatted_text.append(f'{depth_str}{node.text}')
 
 		process_node(self, 0)
-		
-		result = '\n'.join(formatted_text)
-		print("\n=== String Passed to LLM ===")
-		# print(result) dom_element_string
-		
-		return result
-
-	def get_file_upload_element(self, check_siblings: bool = True) -> Optional['DOMElementNode']:
-		# Check if current element is a file input
-		if self.tag_name == 'input' and self.attributes.get('type') == 'file':
-			return self
-
-		# Check children
-		for child in self.children:
-			if isinstance(child, DOMElementNode):
-				result = child.get_file_upload_element(check_siblings=False)
-				if result:
-					return result
-
-		# Check siblings only for the initial call
-		if check_siblings and self.parent:
-			for sibling in self.parent.children:
-				if sibling is not self and isinstance(sibling, DOMElementNode):
-					result = sibling.get_file_upload_element(check_siblings=False)
-					if result:
-						return result
-
-		return None
+		return '\n'.join(formatted_text)
 
 
 SelectorMap = dict[int, DOMElementNode]

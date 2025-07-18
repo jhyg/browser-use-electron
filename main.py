@@ -7,9 +7,7 @@ import logging
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from browser_use import Agent, Browser, BrowserConfig
-from browser_use.browser.context import BrowserContext
-from langchain_openai import ChatOpenAI
+from browser_use import Agent, Browser, BrowserConfig, BrowserContext, ChatOpenAI
 from dotenv import load_dotenv
 import json
 
@@ -125,13 +123,14 @@ async def init_browser():
         browser = Browser(
             config=BrowserConfig(
                 headless=False,
-                disable_security=True
+                disable_security=True,
+                keep_alive=True
             )
         )
         print("Browser initialization complete", flush=True)
         
-        # BrowserContext 생성
-        browser_context = BrowserContext(browser=browser)
+        # BrowserContext 생성 (새 버전에서는 BrowserSession과 동일)
+        browser_context = browser
     
     return browser, browser_context
 
@@ -147,12 +146,11 @@ async def run_agent(task: str):
         browser, browser_context = await init_browser()
         
         # 모델 및 에이전트 생성
-        model = ChatOpenAI(model='gpt-4o')
+        model = ChatOpenAI(model='gpt-4.1')
         agent = Agent(
             task=task,
             llm=model,
-            browser=browser,
-            browser_context=browser_context
+            browser=browser
         )
         
         # 에이전트 실행 - 모든 출력이 자동으로 WebSocket으로 전송됨

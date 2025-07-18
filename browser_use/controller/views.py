@@ -1,6 +1,6 @@
-from typing import Optional
+from typing import Generic, TypeVar
 
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, ConfigDict
 
 
 # Action Input Models
@@ -10,69 +10,64 @@ class SearchGoogleAction(BaseModel):
 
 class GoToUrlAction(BaseModel):
 	url: str
+	new_tab: bool = False  # True to open in new tab, False to navigate in current tab
 
 
 class ClickElementAction(BaseModel):
 	index: int
-	xpath: Optional[str] = None
 
 
 class InputTextAction(BaseModel):
 	index: int
 	text: str
-	xpath: Optional[str] = None
 
 
 class DoneAction(BaseModel):
 	text: str
+	success: bool
+	files_to_display: list[str] | None = []
+
+
+T = TypeVar('T', bound=BaseModel)
+
+
+class StructuredOutputAction(BaseModel, Generic[T]):
+	success: bool = True
+	data: T
 
 
 class SwitchTabAction(BaseModel):
 	page_id: int
 
 
-class OpenTabAction(BaseModel):
-	url: str
+class CloseTabAction(BaseModel):
+	page_id: int
 
 
 class ScrollAction(BaseModel):
-	amount: Optional[int] = None  # The number of pixels to scroll. If None, scroll down/up one page
+	down: bool  # True to scroll down, False to scroll up
+	num_pages: float  # Number of pages to scroll (0.5 = half page, 1.0 = one page, etc.)
+	index: int | None = None  # Optional element index to find scroll container for
 
 
 class SendKeysAction(BaseModel):
 	keys: str
 
+
+class UploadFileAction(BaseModel):
+	index: int
+	path: str
+
+
 class ExtractPageContentAction(BaseModel):
 	value: str
-	
+
+
 class NoParamsAction(BaseModel):
 	"""
 	Accepts absolutely anything in the incoming data
 	and discards it, so the final parsed model is empty.
 	"""
 
-	@model_validator(mode='before')
-	def ignore_all_inputs(cls, values):
-		# No matter what the user sends, discard it and return empty.
-		return {}
-
-	class Config:
-		# If you want to silently allow unknown fields at top-level,
-		# set extra = 'allow' as well:
-		extra = 'allow'
-
-class DragAndDropAction(BaseModel):
-    source_type: str
-    source_identifier: str
-    target_x: int
-    target_y: int
-
-class DblClickAction(BaseModel):
-    element_id: str
-    target_x: int
-    target_y: int
-
-class ClickActionWithIdAndPosition(BaseModel):
-    element_id: str
-    target_x: int
-    target_y: int
+	model_config = ConfigDict(extra='ignore')
+	# No fields defined - all inputs are ignored automatically

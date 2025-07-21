@@ -333,7 +333,7 @@ async def websocket_endpoint(websocket: WebSocket):
             # 클라이언트로부터 명령 수신
             data = await websocket.receive_text()
             command_data = json.loads(data)
-            command = clean_text(command_data.get("command", ""))
+            command = clean_text(command_data.get("prompt", ""))
             
             if not command:
                 continue

@@ -272,6 +272,9 @@ class Agent(Generic[Context, AgentStructuredOutput]):
 		# Initialize file system
 		self._set_file_system(file_system_path)
 
+		# Load credentials from environment variables
+		self._load_credentials_from_env()
+
 		# Action setup
 		self._setup_action_models()
 		self._set_browser_use_version_and_source(source)
@@ -461,6 +464,20 @@ class Agent(Generic[Context, AgentStructuredOutput]):
 
 		self._external_pause_event = asyncio.Event()
 		self._external_pause_event.set()
+
+	def _load_credentials_from_env(self) -> None:
+		"""Load credentials from environment variables and add to sensitive_data if not already present."""
+		if not hasattr(self, 'sensitive_data') or self.sensitive_data is None:
+			self.sensitive_data = {}
+		
+		# Load Google credentials from environment
+		google_email = CONFIG.GOOGLE_EMAIL
+		google_password = CONFIG.GOOGLE_PASSWORD
+		
+		if google_email and google_password:
+			self.sensitive_data['google_email'] = google_email
+			self.sensitive_data['google_password'] = google_password
+			self.logger.debug('Loaded Google credentials from environment variables')
 
 	@property
 	def logger(self) -> logging.Logger:

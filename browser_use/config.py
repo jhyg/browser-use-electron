@@ -149,6 +149,14 @@ class OldConfig:
 		return os.getenv('AZURE_OPENAI_KEY', '')
 
 	@property
+	def GOOGLE_EMAIL(self) -> str:
+		return os.getenv('GOOGLE_EMAIL', '')
+
+	@property
+	def GOOGLE_PASSWORD(self) -> str:
+		return os.getenv('GOOGLE_PASSWORD', '')
+
+	@property
 	def SKIP_LLM_API_KEY_VERIFICATION(self) -> bool:
 		return os.getenv('SKIP_LLM_API_KEY_VERIFICATION', 'false').lower()[:1] in 'ty1'
 
@@ -193,6 +201,10 @@ class FlatEnvConfig(BaseSettings):
 	AZURE_OPENAI_ENDPOINT: str = Field(default='')
 	AZURE_OPENAI_KEY: str = Field(default='')
 	SKIP_LLM_API_KEY_VERIFICATION: bool = Field(default=False)
+
+	# Google account credentials
+	GOOGLE_EMAIL: str = Field(default='')
+	GOOGLE_PASSWORD: str = Field(default='')
 
 	# Runtime hints
 	IN_DOCKER: bool | None = Field(default=None)

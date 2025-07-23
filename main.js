@@ -114,7 +114,8 @@ function startPythonBackend() {
       PYTHONUNBUFFERED: '1',
       PYTHONUTF8: '1'
     },
-    stdio: 'inherit' // 콘솔에 직접 출력
+    stdio: 'inherit', // 콘솔에 직접 출력
+    windowsHide: true
   });
 
   pyProc.on('error', (err) => {
@@ -221,6 +222,6 @@ if (!gotTheLock) {
         title: 'Browser-Use Agent',
         content: 'Already running on port 8999'
       });
-    }
-  });
+  }
+});
 }

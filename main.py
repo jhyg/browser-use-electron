@@ -4,6 +4,8 @@ import asyncio
 import os
 import sys
 import logging
+import threading
+import time
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -33,6 +35,14 @@ browser_context = None
 
 # 활성 WebSocket 연결들 (실시간 로그 전송용)
 active_websockets = set()
+
+# 태스크 관리를 위한 전역 변수들
+current_task_thread = None
+task_stop_flag = threading.Event()
+task_result = None
+task_error = None
+task_status = "idle"  # idle, running, stopping, completed, error
+current_agent = None
 
 # stdout을 WebSocket으로 리디렉션하는 클래스
 class WebSocketWriter:
@@ -134,16 +144,27 @@ async def init_browser():
     
     return browser, browser_context
 
-async def run_agent(task: str):
-    """에이전트 실행 - stdout이 자동으로 WebSocket으로 전송됨"""
-    global browser, browser_context
+
+
+def run_agent_sync(task: str):
+    """동기 에이전트 실행 함수 (스레드에서 실행됨)"""
+    global browser, browser_context, task_result, task_error, task_status, task_stop_flag, current_agent
     
     try:
+        task_status = "running"
+        task_result = None
+        task_error = None
+        
+        print(f"🚀 Starting task: {task}", flush=True)
+        
         # API 키 설정
         load_dotenv()
         
-        # 브라우저 초기화
-        browser, browser_context = await init_browser()
+        # 중지 플래그 확인
+        if task_stop_flag.is_set():
+            print("❌ Task was stopped before execution", flush=True)
+            task_status = "stopped"
+            return
         
         # 모델 및 에이전트 생성
         model = ChatOpenAI(model='gpt-4.1')
@@ -153,19 +174,163 @@ async def run_agent(task: str):
             browser=browser
         )
         
-        # 에이전트 실행 - 모든 출력이 자동으로 WebSocket으로 전송됨
-        history = await agent.run()
-        result = history.final_result()
+        # 전역 에이전트 참조 저장
+        current_agent = agent
         
-        # 결과 반환
-        if result:
-            return result
-        else:
-            return "No result"
+        print("🤖 Agent is working...", flush=True)
+        
+        # 에이전트 실행을 별도 함수로 래핑
+        def run_browser_agent():
+            import asyncio
             
+            async def agent_runner():
+                try:
+                    # 중지 모니터링 태스크 생성
+                    async def monitor_stop_flag():
+                        while not task_stop_flag.is_set():
+                            await asyncio.sleep(0.1)
+                        # 중지 플래그가 설정되면 에이전트 중지
+                        if current_agent and hasattr(current_agent, 'state'):
+                            current_agent.state.stopped = True
+                            print("🛑 Agent stop flag set", flush=True)
+                    
+                    # 모니터링 태스크 시작
+                    monitor_task = asyncio.create_task(monitor_stop_flag())
+                    
+                    # 에이전트 실행과 모니터링을 동시에 실행
+                    agent_task = asyncio.create_task(agent.run())
+                    
+                    # 둘 중 하나가 완료되면 결과 반환
+                    done, pending = await asyncio.wait(
+                        [agent_task, monitor_task],
+                        return_when=asyncio.FIRST_COMPLETED
+                    )
+                    
+                    # 대기 중인 태스크들 취소
+                    for task in pending:
+                        task.cancel()
+                        try:
+                            await task
+                        except asyncio.CancelledError:
+                            pass
+                    
+                    # 에이전트 태스크가 완료되었는지 확인
+                    if agent_task in done:
+                        history = await agent_task
+                        result = history.final_result()
+                        return result if result else "No result"
+                    else:
+                        return "Task was stopped by user"
+                    
+                except Exception as e:
+                    return f"Agent error: {str(e)}"
+            
+            # 새로운 이벤트 루프에서 실행
+            try:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                return loop.run_until_complete(agent_runner())
+            finally:
+                loop.close()
+        
+        # 에이전트 실행
+        task_result = run_browser_agent()
+        
+        if task_stop_flag.is_set():
+            task_status = "stopped"
+            task_result = "Task was stopped by user"
+        else:
+            task_status = "completed"
+            print("✅ Task completed", flush=True)
+        
     except Exception as e:
-        print(f"Agent execution error: {str(e)}")
-        return f"Error: {str(e)}"
+        print(f"❌ Agent execution error: {str(e)}", flush=True)
+        task_error = str(e)
+        task_status = "error"
+    finally:
+        # 에이전트 참조 정리
+        current_agent = None
+
+async def run_agent(task: str):
+    """에이전트 실행 - 스레드 기반으로 제어 가능"""
+    global current_task_thread, task_stop_flag, task_result, task_error, task_status
+    
+    # 이미 실행 중인 태스크가 있으면 중지
+    if current_task_thread and current_task_thread.is_alive():
+        print("⚠️ Another task is running. Stopping it first...", flush=True)
+        await stop_current_task()
+    
+    # 중지 플래그 초기화
+    task_stop_flag.clear()
+    task_status = "starting"
+    
+    # 새 스레드에서 에이전트 실행
+    current_task_thread = threading.Thread(
+        target=run_agent_sync,
+        args=(task,),
+        daemon=True
+    )
+    current_task_thread.start()
+    
+    # 스레드 완료 대기
+    while current_task_thread.is_alive():
+        await asyncio.sleep(0.1)
+        
+        # 중지 요청이 있으면 대기 중단
+        if task_stop_flag.is_set():
+            break
+    
+    # 결과 반환
+    if task_error:
+        return f"Error: {task_error}"
+    elif task_result:
+        return task_result
+    else:
+        return "No result"
+
+async def stop_current_task():
+    """현재 실행 중인 태스크 중지"""
+    global current_task_thread, task_stop_flag, task_status, current_agent
+    
+    if current_task_thread and current_task_thread.is_alive():
+        print("🛑 Stopping current task...", flush=True)
+        task_status = "stopping"
+        
+        # 1. browser-use 에이전트 직접 중지
+        if current_agent and hasattr(current_agent, 'state'):
+            current_agent.state.stopped = True
+            print("🛑 Agent state.stopped = True", flush=True)
+        
+        # 2. 중지 플래그 설정
+        task_stop_flag.set()
+        print("🛑 Stop flag set", flush=True)
+        
+        # 스레드가 종료될 때까지 잠시 대기
+        for i in range(50):  # 최대 5초 대기
+            if not current_task_thread.is_alive():
+                break
+            await asyncio.sleep(0.1)
+            
+            # 진행 상황 표시
+            if i % 10 == 0:
+                print(f"⏳ Waiting for task to stop... ({i/10:.1f}s)", flush=True)
+        
+        if current_task_thread.is_alive():
+            print("⚠️ Task thread did not stop gracefully", flush=True)
+            # 강제 종료를 위한 추가 시도
+            try:
+                import threading
+                if hasattr(threading, '_shutdown'):
+                    print("🔄 Attempting force cleanup...", flush=True)
+            except:
+                pass
+        else:
+            print("✅ Task stopped successfully", flush=True)
+        
+        return True
+    else:
+        print("ℹ️ No active task to stop", flush=True)
+        return False
 
 async def check_and_install_playwright():
     """Playwright 브라우저 설치 확인 및 설치"""
@@ -313,6 +478,30 @@ async def health_check():
     """헬스 체크"""
     return {"status": "healthy", "browser_ready": browser is not None}
 
+@app.get("/api/task/status")
+async def get_task_status():
+    """현재 태스크 상태 조회"""
+    global task_status, current_task_thread
+    
+    is_running = current_task_thread is not None and current_task_thread.is_alive()
+    
+    return {
+        "status": task_status,
+        "is_running": is_running,
+        "can_stop": is_running and task_status in ["running", "starting"]
+    }
+
+@app.post("/api/task/stop")
+async def stop_task():
+    """현재 태스크 중지"""
+    stopped = await stop_current_task()
+    
+    return {
+        "success": stopped,
+        "message": "Task stopped successfully" if stopped else "No active task to stop",
+        "status": task_status
+    }
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     """WebSocket을 통한 실시간 로그 스트리밍"""
@@ -332,11 +521,58 @@ async def websocket_endpoint(websocket: WebSocket):
         while True:
             # 클라이언트로부터 명령 수신
             data = await websocket.receive_text()
-            command_data = json.loads(data)
+            print(f"🔍 Raw WebSocket message received: {data}", flush=True)
+            
+            try:
+                command_data = json.loads(data)
+                print(f"🔍 Parsed command_data: {command_data}", flush=True)
+            except json.JSONDecodeError as e:
+                print(f"❌ JSON parsing error: {e}", flush=True)
+                continue
+            
+            # 메시지 타입 확인
+            message_type = command_data.get("type", "")
+            print(f"🔍 Message type: '{message_type}'", flush=True)
+            
+            if message_type == "stop_request":
+                # 태스크 중지 요청 처리
+                print("📨 Received stop request from client", flush=True)
+                print(f"🔍 Current task status: {task_status}", flush=True)
+                print(f"🔍 Thread alive: {current_task_thread.is_alive() if current_task_thread else False}", flush=True)
+                print(f"🔍 Agent exists: {current_agent is not None}", flush=True)
+                
+                stopped = await stop_current_task()
+                
+                # 중지 결과 전송
+                await websocket.send_text(json.dumps({
+                    "type": "stop_result",
+                    "content": "Task stopped successfully" if stopped else "No active task to stop",
+                    "success": stopped,
+                    "timestamp": asyncio.get_event_loop().time()
+                }))
+                
+                # 작업 완료 마커
+                await websocket.send_text(json.dumps({
+                    "type": "end",
+                    "content": "<TASK_STOPPED>",
+                    "timestamp": asyncio.get_event_loop().time()
+                }))
+                
+                continue
+            
+            # 일반 명령 처리
             command = clean_text(command_data.get("prompt", ""))
             
             if not command:
                 continue
+            
+            # 현재 태스크 상태 전송
+            await websocket.send_text(json.dumps({
+                "type": "task_status",
+                "content": f"Starting task: {command}",
+                "status": "starting",
+                "timestamp": asyncio.get_event_loop().time()
+            }))
                 
             # 에이전트 실행 - 모든 로그가 자동으로 WebSocket으로 전송됨
             result = await run_agent(command)
@@ -345,6 +581,7 @@ async def websocket_endpoint(websocket: WebSocket):
             await websocket.send_text(json.dumps({
                 "type": "result",
                 "content": result,
+                "status": task_status,
                 "timestamp": asyncio.get_event_loop().time()
             }))
             

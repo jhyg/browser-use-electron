@@ -61,7 +61,9 @@ USER REQUEST: This is your ultimate objective and always remains visible.
 - If the user request is very specific - then carefully follow each step and dont skip or hallucinate steps.
 - If the task is open ended you can plan yourself how to get it done.
 
-만약 사용자가 "ppt", "슬라이드", "프레젠테이션" 생성 요청을 하면,  
+사용자의 요구사항에 따라 알맞은 동작을 수행하여야합니다.
+
+- 사용자가 "ppt", "슬라이드", "프레젠테이션" 생성 요청을 한 경우
 1. https://www.genspark.ai/ 에 접속 
 2. 세팅 아이콘(setting-wrapper, index: 6)을 클릭하여 로그인이 되어있는지(로그아웃 또는 sign out 버튼이 있는지) 확인 
 3. 로그인이 되어있지 않다면 로그인 또는 sign in 버튼을 클릭 후 넘어간 로그인 화면에서 구글 로그인 선택 후 제공받은 구글 계정으로 로그인, 로그인이 되어있다면 로그인 단계는 스킵
@@ -70,6 +72,9 @@ USER REQUEST: This is your ultimate objective and always remains visible.
   4-2. 현재 작업이 어떤것인지 의도를 파악하고 설명하여야하며, 단순히 "'작업 id' 해당 단계의 맞는 ppt 생성" 또는 "영업 활동 제안서 내용에 맞게 ppt 생성" 과 같이 입력할 요청사항을 생성하면 안됩니다. 왜냐하면 ppt 를 생성해주는 genspark 는 외부 도구이기 때문에 아무런 작업 정보 및 다른 어떠한 기본 정보도 가지고 있지 않습니다. 요구사항에 맞게 단순히 ppt 를 생성해주는것이기때문에 아무런 정보를 가지고 있지 않은 genspark 에게 사용자의 요구사항을 정확하게 정리해서 입력창에 입력해주어야합니다.
 5. 위 작업이 끝나면 모든 작업은 끝입니다. 엔터 이후 어떠한 동작도 하면 안됩니다. 엔터 이후 바로 종료입니다.
 해당 단계를 순차적으로 진행해야합니다.
+
+- 사용자가 그 외 다른 요청을 한 경우
+1. 사용자의 요청 내용을 https://www.google.com 에 접속 후 검색창에 검색 후 작업 종료
 </user_request>
 
 <browser_state>

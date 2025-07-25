@@ -502,6 +502,148 @@ async def stop_task():
         "status": task_status
     }
 
+# .env 파일 관리를 위한 헬퍼 함수들
+def get_env_file_path():
+    """환경에 따른 .env 파일 경로 반환"""
+    # 우선순위: resources/app/.env -> 스크립트 디렉토리/.env
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    
+    # 1. Electron 패키지 환경: resources/app/.env
+    resources_env = os.path.join(script_dir, ".env")
+    
+    # 2. 개발 환경이나 다른 경우를 위한 대체 경로들
+    fallback_paths = [
+        os.path.join(os.getcwd(), ".env"),  # 현재 작업 디렉토리
+        os.path.join(os.path.dirname(script_dir), ".env"),  # 상위 디렉토리
+    ]
+    
+    # 경로 정보 로깅
+    print(f"🔍 Script directory: {script_dir}", flush=True)
+    print(f"🔍 Primary .env path: {resources_env}", flush=True)
+    
+    # 우선순위에 따라 .env 파일 찾기
+    if os.path.exists(resources_env):
+        print(f"✅ Found .env at primary location: {resources_env}", flush=True)
+        return resources_env
+    
+    # 대체 경로들 확인
+    for fallback_path in fallback_paths:
+        print(f"🔍 Checking fallback: {fallback_path}", flush=True)
+        if os.path.exists(fallback_path):
+            print(f"✅ Found .env at fallback location: {fallback_path}", flush=True)
+            return fallback_path
+    
+    # 아무것도 없으면 primary 경로에 생성
+    print(f"⚠️ No .env found, will use primary location: {resources_env}", flush=True)
+    return resources_env
+
+def read_env_file():
+    """현재 .env 파일 내용을 읽어서 딕셔너리로 반환"""
+    env_vars = {}
+    env_file_path = get_env_file_path()
+    
+    if os.path.exists(env_file_path):
+        print(f"✅ Reading .env from: {env_file_path}", flush=True)
+        with open(env_file_path, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#') and '=' in line:
+                    key, value = line.split('=', 1)
+                    env_vars[key.strip()] = value.strip().strip('"').strip("'")
+        print(f"📋 Loaded {len(env_vars)} environment variables", flush=True)
+    else:
+        print(f"⚠️ .env file not found at: {env_file_path}", flush=True)
+        # .env 파일이 없으면 빈 파일 생성
+        try:
+            with open(env_file_path, 'w', encoding='utf-8') as f:
+                f.write("# Browser-use Agent Configuration\n")
+            print(f"✅ Created empty .env file at: {env_file_path}", flush=True)
+        except Exception as e:
+            print(f"❌ Failed to create .env file: {e}", flush=True)
+    
+    return env_vars
+
+def write_env_file(env_vars):
+    """환경변수 딕셔너리를 .env 파일에 저장"""
+    env_file_path = get_env_file_path()
+    
+    print(f"💾 Writing .env to: {env_file_path}", flush=True)
+    
+    with open(env_file_path, 'w', encoding='utf-8') as f:
+        f.write("# Browser-use Agent Configuration\n")
+        for key, value in env_vars.items():
+            f.write(f'{key}={value}\n')
+    
+    print(f"✅ Saved {len(env_vars)} environment variables", flush=True)
+
+def reload_env():
+    """환경변수를 다시 로드"""
+    env_file_path = get_env_file_path()
+    print(f"🔄 Reloading environment from: {env_file_path}", flush=True)
+    load_dotenv(dotenv_path=env_file_path, override=True)
+
+class ConfigModel(BaseModel):
+    """환경변수 설정 모델"""
+    ANTHROPIC_API_KEY: str = ""
+    OPENAI_API_KEY: str = ""
+    GOOGLE_API_KEY: str = ""
+    custom_vars: dict = {}
+
+@app.get("/api/config")
+async def get_config():
+    """현재 .env 파일 설정 조회"""
+    try:
+        env_vars = read_env_file()
+        
+        return {
+            "success": True,
+            "config": env_vars,
+            "debug_info": {
+                "env_file_path": get_env_file_path(),
+                "file_exists": os.path.exists(get_env_file_path()),
+                "current_working_dir": os.getcwd(),
+                "script_dir": os.path.dirname(os.path.abspath(__file__))
+            }
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "debug_info": {
+                "env_file_path": get_env_file_path(),
+                "current_working_dir": os.getcwd(),
+                "script_dir": os.path.dirname(os.path.abspath(__file__))
+            }
+        }
+
+@app.post("/api/config")
+async def update_config(config_data: dict):
+    """환경변수 설정 업데이트"""
+    try:
+        # 현재 .env 파일 읽기
+        current_env = read_env_file()
+        
+        # 새로운 값들로 업데이트
+        for key, value in config_data.items():
+            if value.strip():  # 빈 값이 아닌 경우만 업데이트
+                current_env[key] = value.strip()
+        
+        # .env 파일에 저장
+        write_env_file(current_env)
+        
+        # 환경변수 다시 로드
+        reload_env()
+        
+        return {
+            "success": True,
+            "message": "Configuration updated successfully"
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     """WebSocket을 통한 실시간 로그 스트리밍"""

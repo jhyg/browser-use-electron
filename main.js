@@ -24,6 +24,164 @@ if (process.defaultApp) {
   app.setAsDefaultProtocolClient(PROTOCOL_NAME);
 }
 
+// Windows 레지스트리에 프로토콜 핸들러 등록
+function registerProtocolHandler() {
+  if (process.platform !== 'win32') return;
+  
+  try {
+    const exePath = process.execPath.replace(/\\/g, '\\\\'); // 백슬래시 이스케이프
+    console.log(`🔧 Registering protocol handler for: ${exePath}`);
+    
+    // 레지스트리 명령어들 (순서가 중요함)
+    const commands = [
+      {
+        cmd: `reg delete "HKEY_CURRENT_USER\\Software\\Classes\\browser-use-agent" /f`,
+        desc: "기존 등록 정리",
+        allowFail: true // 처음 실행시엔 없을 수 있음
+      },
+      {
+        cmd: `reg add "HKEY_CURRENT_USER\\Software\\Classes\\browser-use-agent" /f`,
+        desc: "기본 키 생성"
+      },
+      {
+        cmd: `reg add "HKEY_CURRENT_USER\\Software\\Classes\\browser-use-agent" /ve /d "URL:Browser Use Agent Protocol" /f`,
+        desc: "프로토콜 기본 설명"
+      },
+      {
+        cmd: `reg add "HKEY_CURRENT_USER\\Software\\Classes\\browser-use-agent" /v "URL Protocol" /d "" /f`,
+        desc: "URL 프로토콜 플래그"
+      },
+      {
+        cmd: `reg add "HKEY_CURRENT_USER\\Software\\Classes\\browser-use-agent\\DefaultIcon" /f`,
+        desc: "DefaultIcon 키 생성"
+      },
+      {
+        cmd: `reg add "HKEY_CURRENT_USER\\Software\\Classes\\browser-use-agent\\DefaultIcon" /ve /d "\\"${exePath}\\",0" /f`,
+        desc: "기본 아이콘 설정"
+      },
+      {
+        cmd: `reg add "HKEY_CURRENT_USER\\Software\\Classes\\browser-use-agent\\shell" /f`,
+        desc: "shell 키 생성"
+      },
+      {
+        cmd: `reg add "HKEY_CURRENT_USER\\Software\\Classes\\browser-use-agent\\shell\\open" /f`,
+        desc: "open 키 생성"
+      },
+      {
+        cmd: `reg add "HKEY_CURRENT_USER\\Software\\Classes\\browser-use-agent\\shell\\open\\command" /f`,
+        desc: "command 키 생성"
+      },
+      {
+        cmd: `reg add "HKEY_CURRENT_USER\\Software\\Classes\\browser-use-agent\\shell\\open\\command" /ve /d "\\"${exePath}\\" \\"%1\\"" /f`,
+        desc: "실행 명령어 설정"
+      }
+    ];
+    
+    // 순차적으로 실행 (동기적으로)
+    let currentIndex = 0;
+    
+    function executeNextCommand() {
+      if (currentIndex >= commands.length) {
+        console.log('🎉 프로토콜 핸들러 등록 완료!');
+        // 등록 확인
+        verifyRegistration(exePath);
+        return;
+      }
+      
+      const cmdObj = commands[currentIndex];
+      console.log(`📝 ${currentIndex + 1}/${commands.length}: ${cmdObj.desc}...`);
+      
+      try {
+        const result = spawn('cmd', ['/c', cmdObj.cmd], { 
+          stdio: 'pipe',
+          windowsHide: true 
+        });
+        
+        let output = '';
+        let errorOutput = '';
+        
+        result.stdout.on('data', (data) => {
+          output += data.toString();
+        });
+        
+        result.stderr.on('data', (data) => {
+          errorOutput += data.toString();
+        });
+        
+        result.on('close', (code) => {
+          if (code === 0) {
+            console.log(`✅ ${cmdObj.desc} - 성공`);
+          } else if (cmdObj.allowFail) {
+            console.log(`⚠️ ${cmdObj.desc} - 실패했지만 무시 (코드: ${code})`);
+          } else {
+            console.log(`❌ ${cmdObj.desc} - 실패 (코드: ${code})`);
+            if (errorOutput) {
+              console.log(`   오류: ${errorOutput.trim()}`);
+            }
+          }
+          
+          currentIndex++;
+          // 다음 명령어 실행
+          setTimeout(executeNextCommand, 100); // 100ms 대기
+        });
+        
+        result.on('error', (error) => {
+          if (cmdObj.allowFail) {
+            console.log(`⚠️ ${cmdObj.desc} - 오류 무시: ${error.message}`);
+          } else {
+            console.log(`❌ ${cmdObj.desc} - 오류: ${error.message}`);
+          }
+          currentIndex++;
+          setTimeout(executeNextCommand, 100);
+        });
+        
+      } catch (error) {
+        console.error(`❌ ${cmdObj.desc} - 예외 발생:`, error);
+        currentIndex++;
+        setTimeout(executeNextCommand, 100);
+      }
+    }
+    
+    // 첫 번째 명령어 실행 시작
+    executeNextCommand();
+    
+  } catch (error) {
+    console.error('❌ Failed to register protocol handler:', error);
+  }
+}
+
+// 등록 확인 함수
+function verifyRegistration(exePath) {
+  console.log('🔍 레지스트리 등록 확인 중...');
+  
+  const verifyCmd = 'reg query "HKEY_CURRENT_USER\\Software\\Classes\\browser-use-agent\\shell\\open\\command"';
+  
+  try {
+    const result = spawn('cmd', ['/c', verifyCmd], { 
+      stdio: 'pipe',
+      windowsHide: true 
+    });
+    
+    let output = '';
+    result.stdout.on('data', (data) => {
+      output += data.toString();
+    });
+    
+    result.on('close', (code) => {
+      if (code === 0 && output.includes(exePath.replace(/\\\\/g, '\\'))) {
+        console.log('✅ 프로토콜 핸들러 등록 확인됨!');
+        console.log('🌟 브라우저에서 browser-use-agent:// 링크 사용 가능');
+      } else {
+        console.log('⚠️ 프로토콜 핸들러 등록 확인 실패');
+        console.log('   수동 등록이 필요할 수 있습니다.');
+      }
+    });
+    
+  } catch (error) {
+    console.log('⚠️ 등록 확인 중 오류:', error.message);
+  }
+}
+
 // 시스템 트레이 아이콘 생성
 function createTray() {
   // 간단한 트레이 아이콘 생성
@@ -106,6 +264,16 @@ function startPythonBackend() {
   
   console.log(`Python script path: ${pythonScript}`);
   
+  // Python 프로세스의 작업 디렉토리 설정
+  let pythonCwd;
+  if (app.isPackaged) {
+    pythonCwd = path.join(process.resourcesPath, 'app');
+  } else {
+    pythonCwd = __dirname;
+  }
+  
+  console.log(`Python working directory: ${pythonCwd}`);
+  
   // main.py 실행 (UTF-8 인코딩 강제)
   pyProc = spawn('python', ['-u', pythonScript], {
     env: {
@@ -114,6 +282,7 @@ function startPythonBackend() {
       PYTHONUNBUFFERED: '1',
       PYTHONUTF8: '1'
     },
+    cwd: pythonCwd, // 작업 디렉토리 명시적 설정
     stdio: 'inherit', // 콘솔에 직접 출력
     windowsHide: true
   });
@@ -151,6 +320,9 @@ app.whenReady().then(() => {
   // Python 백엔드 시작
   startPythonBackend();
   
+  // Windows 레지스트리에 프로토콜 핸들러 등록
+  registerProtocolHandler();
+
   console.log('Browser-Use Agent started in background');
   console.log('Backend running on http://localhost:8999');
   

@@ -5,20 +5,84 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "build": "electron-packager . browser-use-agent --platform=win32 --arch=x64 --out=dist --overwrite",
-    "build:win": "electron-packager . browser-use-agent --platform=win32 --arch=x64 --out=dist --overwrite",
-    "build:mac": "electron-packager . browser-use-agent --platform=darwin --arch=x64 --out=dist --overwrite",
-    "build:linux": "electron-packager . browser-use-agent --platform=linux --arch=x64 --out=dist --overwrite",
-    "dist": "electron-packager . browser-use-agent --platform=win32 --arch=x64 --out=dist --overwrite",
+    "build": "electron-builder",
+    "build:win": "electron-builder --win",
+    "build:mac": "electron-builder --mac",
+    "build:linux": "electron-builder --linux",
+    "dist": "electron-builder --publish=never",
+    "release": "electron-builder --publish=always",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": ["browser-use", "agent", "automation", "process-gpt"],
   "author": "Process-GPT",
   "license": "MIT",
+  "homepage": "https://github.com/jhyg/browser-use-electron",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jhyg/browser-use-electron.git"
+  },
+  "build": {
+    "appId": "io.process-gpt.browser-use-agent",
+    "productName": "Browser Use Agent",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "renderer.js",
+      "index.html",
+      "agent_backend.py",
+      "main.py",
+      "requirements.txt",
+      "browser_use/**/*",
+      "static/**/*",
+      "node_modules/**/*"
+    ],
+    "asarUnpack": [
+      "main.py",
+      "agent_backend.py",
+      "requirements.txt",
+      "browser_use/**/*"
+    ],
+    "mac": {
+      "category": "public.app-category.productivity",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": ["x64", "arm64"]
+        }
+      ],
+      "icon": "static/browser-use.png",
+      "extendInfo": {
+        "CFBundleURLTypes": [
+          {
+            "CFBundleURLName": "Browser Use Agent Protocol",
+            "CFBundleURLSchemes": ["browser-use-agent"]
+          }
+        ],
+        "LSUIElement": false,
+        "LSBackgroundOnly": false,
+        "NSHighResolutionCapable": true,
+        "CFBundleDocumentTypes": []
+      }
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "linux": {
+      "target": "AppImage"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "jhyg",
+      "repo": "browser-use-electron"
+    }
+  },
   "dependencies": {
   },
   "devDependencies": {
     "electron": "^35.1.2",
-    "electron-packager": "^17.1.1"
+    "electron-packager": "^17.1.1",
+    "electron-builder": "^25.1.8"
   }
 }

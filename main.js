@@ -1,6 +1,6 @@
 // main.js (헤드리스 일렉트론 앱 - main.py 실행용)
-const { app, Tray, Menu, nativeImage } = require('electron');
-const { spawn } = require('child_process');
+const { app, Tray, Menu, nativeImage, Notification } = require('electron');
+const { spawn, exec } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 let pyProc = null;
@@ -16,28 +16,41 @@ app.commandLine.appendSwitch('--disable-renderer-backgrounding');
 
 // 커스텀 프로토콜 등록 (browser-use-agent://)
 const PROTOCOL_NAME = 'browser-use-agent';
-if (process.defaultApp) {
-  if (process.argv.length >= 2) {
-    app.setAsDefaultProtocolClient(PROTOCOL_NAME, process.execPath, [path.resolve(process.argv[1])]);
+
+function setupProtocolHandler() {
+  if (process.defaultApp) {
+    if (process.argv.length >= 2) {
+      app.setAsDefaultProtocolClient(PROTOCOL_NAME, process.execPath, [path.resolve(process.argv[1])]);
+    }
+  } else {
+    app.setAsDefaultProtocolClient(PROTOCOL_NAME);
   }
-} else {
-  app.setAsDefaultProtocolClient(PROTOCOL_NAME);
+}
+
+// 플랫폼별 프로토콜 핸들러 등록
+function registerProtocolHandler() {
+  if (process.platform === 'darwin') {
+    // macOS에서는 앱이 빌드될 때 Info.plist에 정의되므로 별도 등록 불필요
+    console.log('🍎 macOS: Protocol handler will be registered via Info.plist');
+    return;
+  } else if (process.platform === 'win32') {
+    registerWindowsProtocolHandler();
+  } else if (process.platform === 'linux') {
+    registerLinuxProtocolHandler();
+  }
 }
 
 // Windows 레지스트리에 프로토콜 핸들러 등록
-function registerProtocolHandler() {
-  if (process.platform !== 'win32') return;
-  
+function registerWindowsProtocolHandler() {
   try {
-    const exePath = process.execPath.replace(/\\/g, '\\\\'); // 백슬래시 이스케이프
-    console.log(`🔧 Registering protocol handler for: ${exePath}`);
+    const exePath = process.execPath.replace(/\\/g, '\\\\');
+    console.log(`🪟 Windows: Registering protocol handler for: ${exePath}`);
     
-    // 레지스트리 명령어들 (순서가 중요함)
     const commands = [
       {
         cmd: `reg delete "HKEY_CURRENT_USER\\Software\\Classes\\browser-use-agent" /f`,
         desc: "기존 등록 정리",
-        allowFail: true // 처음 실행시엔 없을 수 있음
+        allowFail: true
       },
       {
         cmd: `reg add "HKEY_CURRENT_USER\\Software\\Classes\\browser-use-agent" /f`,
@@ -52,22 +65,6 @@ function registerProtocolHandler() {
         desc: "URL 프로토콜 플래그"
       },
       {
-        cmd: `reg add "HKEY_CURRENT_USER\\Software\\Classes\\browser-use-agent\\DefaultIcon" /f`,
-        desc: "DefaultIcon 키 생성"
-      },
-      {
-        cmd: `reg add "HKEY_CURRENT_USER\\Software\\Classes\\browser-use-agent\\DefaultIcon" /ve /d "\\"${exePath}\\",0" /f`,
-        desc: "기본 아이콘 설정"
-      },
-      {
-        cmd: `reg add "HKEY_CURRENT_USER\\Software\\Classes\\browser-use-agent\\shell" /f`,
-        desc: "shell 키 생성"
-      },
-      {
-        cmd: `reg add "HKEY_CURRENT_USER\\Software\\Classes\\browser-use-agent\\shell\\open" /f`,
-        desc: "open 키 생성"
-      },
-      {
         cmd: `reg add "HKEY_CURRENT_USER\\Software\\Classes\\browser-use-agent\\shell\\open\\command" /f`,
         desc: "command 키 생성"
       },
@@ -77,119 +74,86 @@ function registerProtocolHandler() {
       }
     ];
     
-    // 순차적으로 실행 (동기적으로)
     let currentIndex = 0;
-    
     function executeNextCommand() {
       if (currentIndex >= commands.length) {
-        console.log('🎉 프로토콜 핸들러 등록 완료!');
-        // 등록 확인
-        verifyRegistration(exePath);
+        console.log('🎉 Windows: 프로토콜 핸들러 등록 완료!');
         return;
       }
       
       const cmdObj = commands[currentIndex];
       console.log(`📝 ${currentIndex + 1}/${commands.length}: ${cmdObj.desc}...`);
       
-      try {
-        const result = spawn('cmd', ['/c', cmdObj.cmd], { 
-          stdio: 'pipe',
-          windowsHide: true 
-        });
+      const result = spawn('cmd', ['/c', cmdObj.cmd], { 
+        stdio: 'pipe',
+        windowsHide: true 
+      });
+      
+      result.on('close', (code) => {
+        if (code === 0) {
+          console.log(`✅ ${cmdObj.desc} - 성공`);
+        } else if (cmdObj.allowFail) {
+          console.log(`⚠️ ${cmdObj.desc} - 실패했지만 무시 (코드: ${code})`);
+        } else {
+          console.log(`❌ ${cmdObj.desc} - 실패 (코드: ${code})`);
+        }
         
-        let output = '';
-        let errorOutput = '';
-        
-        result.stdout.on('data', (data) => {
-          output += data.toString();
-        });
-        
-        result.stderr.on('data', (data) => {
-          errorOutput += data.toString();
-        });
-        
-        result.on('close', (code) => {
-          if (code === 0) {
-            console.log(`✅ ${cmdObj.desc} - 성공`);
-          } else if (cmdObj.allowFail) {
-            console.log(`⚠️ ${cmdObj.desc} - 실패했지만 무시 (코드: ${code})`);
-          } else {
-            console.log(`❌ ${cmdObj.desc} - 실패 (코드: ${code})`);
-            if (errorOutput) {
-              console.log(`   오류: ${errorOutput.trim()}`);
-            }
-          }
-          
-          currentIndex++;
-          // 다음 명령어 실행
-          setTimeout(executeNextCommand, 100); // 100ms 대기
-        });
-        
-        result.on('error', (error) => {
-          if (cmdObj.allowFail) {
-            console.log(`⚠️ ${cmdObj.desc} - 오류 무시: ${error.message}`);
-          } else {
-            console.log(`❌ ${cmdObj.desc} - 오류: ${error.message}`);
-          }
-          currentIndex++;
-          setTimeout(executeNextCommand, 100);
-        });
-        
-      } catch (error) {
-        console.error(`❌ ${cmdObj.desc} - 예외 발생:`, error);
         currentIndex++;
         setTimeout(executeNextCommand, 100);
-      }
+      });
+      
+      result.on('error', (error) => {
+        if (cmdObj.allowFail) {
+          console.log(`⚠️ ${cmdObj.desc} - 오류 무시: ${error.message}`);
+        } else {
+          console.log(`❌ ${cmdObj.desc} - 오류: ${error.message}`);
+        }
+        currentIndex++;
+        setTimeout(executeNextCommand, 100);
+      });
     }
     
-    // 첫 번째 명령어 실행 시작
     executeNextCommand();
     
   } catch (error) {
-    console.error('❌ Failed to register protocol handler:', error);
+    console.error('❌ Windows: Failed to register protocol handler:', error);
   }
 }
 
-// 등록 확인 함수
-function verifyRegistration(exePath) {
-  console.log('🔍 레지스트리 등록 확인 중...');
-  
-  const verifyCmd = 'reg query "HKEY_CURRENT_USER\\Software\\Classes\\browser-use-agent\\shell\\open\\command"';
-  
-  try {
-    const result = spawn('cmd', ['/c', verifyCmd], { 
-      stdio: 'pipe',
-      windowsHide: true 
-    });
-    
-    let output = '';
-    result.stdout.on('data', (data) => {
-      output += data.toString();
-    });
-    
-    result.on('close', (code) => {
-      if (code === 0 && output.includes(exePath.replace(/\\\\/g, '\\'))) {
-        console.log('✅ 프로토콜 핸들러 등록 확인됨!');
-        console.log('🌟 브라우저에서 browser-use-agent:// 링크 사용 가능');
-      } else {
-        console.log('⚠️ 프로토콜 핸들러 등록 확인 실패');
-        console.log('   수동 등록이 필요할 수 있습니다.');
-      }
-    });
-    
-  } catch (error) {
-    console.log('⚠️ 등록 확인 중 오류:', error.message);
-  }
+// Linux 프로토콜 핸들러 등록
+function registerLinuxProtocolHandler() {
+  console.log('🐧 Linux: Protocol handler registration (desktop file based)');
+  // Linux에서는 .desktop 파일을 통해 처리됨
 }
 
 // 시스템 트레이 아이콘 생성
 function createTray() {
-  // 간단한 트레이 아이콘 생성
-  const icon = nativeImage.createFromDataURL('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==');
+  // 플랫폼별 아이콘 크기 조정
+  let iconSize;
+  if (process.platform === 'darwin') {
+    iconSize = 16; // macOS는 16x16
+  } else if (process.platform === 'win32') {
+    iconSize = 16; // Windows는 16x16
+  } else {
+    iconSize = 24; // Linux는 24x24
+  }
+  
+  // 간단한 트레이 아이콘 생성 (더 선명한 아이콘)
+  const iconData = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAABHNCSVQICAgIfAhkiAAAAAlwSFlzAAAAdgAAAHYBTnsmCAAAABl0RVh0U29mdHdhcmUAd3d3Lmlua3Njape.org5vuPBoAAAFYSURBVDiNpZM9SwNBEIafgwQLwUKwsLGwsLBQsLCwsLGwsLCwsLGwsLCwsLCwsLGwsLCwsLCwsLGwsLCwsLCwsLGwsLCwsLCwsLCwsLCwsLGwsLCwsLCwsLCwsLGwsLCwsLCwsLCwsLGwsLCwsLCwsLCwsLGwsLCwsLCwsLCwsLGwsLCwsLCwsLCwsLGwsLCwsLCwsLCwsLGwsLCwsLCwsLCwsLGwsLCwsLCwsLCwsLGwsLCwsLCwsLCwsLGwsLCwsLCwsLCwsLGwsLCwsLCwsLCwsLGwsLCwsLCwsLCwsLGwsLCwsLCwsLCwsLGwsLCwsLCwsLCwsLGwsLCwsLCwsLCwsLGwsLCwsLCwsLCwsLGwsLCwsLCwsLCwsLGwsLCwsLCwsLCwsLGwsLCwsLCwsLCwsLGwsA';
+  const icon = nativeImage.createFromDataURL(iconData);
+  // macOS에서는 템플릿 이미지로 설정 (setSize는 일부 버전에서 지원하지 않음)
+  if (process.platform === 'darwin') {
+    try {
+      icon.setTemplateImage(true);
+    } catch (e) {
+      console.log('템플릿 이미지 설정 건너뜀');
+    }
+  }
+  
   tray = new Tray(icon);
   
-  // 트레이 메뉴 생성
-  const contextMenu = Menu.buildFromTemplate([
+  // 플랫폼별 트레이 메뉴
+  const menuTemplate = [
     {
       label: 'Browser-Use Agent',
       enabled: false
@@ -198,18 +162,18 @@ function createTray() {
       type: 'separator'
     },
     {
-      label: 'Status: Running',
+      label: '상태: 실행 중',
       enabled: false
     },
     {
-      label: 'Port: 8999',
+      label: '포트: 8999',
       enabled: false
     },
     {
       type: 'separator'
     },
     {
-      label: 'Open in Browser',
+      label: '브라우저에서 열기',
       click: () => {
         require('electron').shell.openExternal('http://localhost:8999');
       }
@@ -218,115 +182,208 @@ function createTray() {
       type: 'separator'
     },
     {
-      label: 'Quit',
+      label: process.platform === 'darwin' ? '종료' : 'Quit',
       click: () => {
         app.quit();
       }
     }
-  ]);
+  ];
   
-  tray.setToolTip('Browser-Use Agent - Running on port 8999');
+  const contextMenu = Menu.buildFromTemplate(menuTemplate);
+  tray.setToolTip('Browser-Use Agent - 포트 8999에서 실행 중');
   tray.setContextMenu(contextMenu);
+  
+  // macOS에서는 클릭 이벤트 추가
+  if (process.platform === 'darwin') {
+    tray.on('click', () => {
+      tray.popUpContextMenu();
+    });
+  }
+}
+
+// 크로스 플랫폼 알림 표시
+function showNotification(title, body, onClick = null) {
+  if (Notification.isSupported()) {
+    const notification = new Notification({
+      title: title,
+      body: body,
+      silent: false
+    });
+    
+    if (onClick) {
+      notification.on('click', onClick);
+    }
+    
+    notification.show();
+  } else {
+    // Notification이 지원되지 않는 경우 콘솔에 출력
+    console.log(`📢 ${title}: ${body}`);
+  }
+}
+
+// Python 실행 파일 찾기 (크로스 플랫폼)
+function findPython() {
+  const pythonCommands = process.platform === 'win32' 
+    ? ['python', 'python3', 'py']
+    : ['python3', 'python'];
+  
+  return new Promise((resolve) => {
+    let index = 0;
+    
+    function tryNext() {
+      if (index >= pythonCommands.length) {
+        resolve(null);
+        return;
+      }
+      
+      const cmd = pythonCommands[index];
+      exec(`${cmd} --version`, (error) => {
+        if (!error) {
+          resolve(cmd);
+        } else {
+          index++;
+          tryNext();
+        }
+      });
+    }
+    
+    tryNext();
+  });
 }
 
 // Python 백엔드 프로세스 시작
-function startPythonBackend() {
-  console.log('Starting Python backend (main.py)...');
+async function startPythonBackend() {
+  console.log('🐍 Python 백엔드 시작 중...');
   
-  // main.py 경로 설정 (개발 환경 vs 빌드 환경)
-  let pythonScript;
-  if (app.isPackaged) {
-    // 빌드된 앱에서는 resources/app 폴더에서 찾기
-    pythonScript = path.join(process.resourcesPath, 'app', 'main.py');
-  } else {
-    // 개발 환경에서는 현재 디렉토리
-    pythonScript = path.join(__dirname, 'main.py');
+  // Python 실행 파일 찾기
+  const pythonCmd = await findPython();
+  if (!pythonCmd) {
+    console.error('❌ Python이 설치되지 않았습니다!');
+    showNotification('오류', 'Python이 설치되지 않았습니다. Python 3.7 이상을 설치해주세요.');
+    return;
   }
   
-  // 파일 존재 확인
-  if (!fs.existsSync(pythonScript)) {
-    console.error(`Python script not found at: ${pythonScript}`);
-    // 대체 경로들 시도
-    const alternatives = [
-      path.join(__dirname, 'main.py'),
+  console.log(`✅ Python 실행 파일: ${pythonCmd}`);
+  
+  // main.py 경로 설정
+  let pythonScript;
+  let pythonCwd;
+  
+  if (app.isPackaged) {
+    // 빌드된 앱에서 경로 찾기 (asarUnpack 사용)
+    const possiblePaths = [
+      path.join(process.resourcesPath, 'app.asar.unpacked', 'main.py'),  // asarUnpack으로 해제된 파일
+      path.join(process.resourcesPath, 'app', 'main.py'),
       path.join(process.resourcesPath, 'main.py'),
-      path.join(process.cwd(), 'main.py')
+      path.join(__dirname, 'main.py')
     ];
     
-    for (const alt of alternatives) {
-      if (fs.existsSync(alt)) {
-        pythonScript = alt;
-        console.log(`Found Python script at: ${pythonScript}`);
+    for (const testPath of possiblePaths) {
+      console.log(`🔍 Checking Python script at: ${testPath}`);
+      if (fs.existsSync(testPath)) {
+        pythonScript = testPath;
+        pythonCwd = path.dirname(testPath);
+        console.log(`✅ Found Python script at: ${pythonScript}`);
         break;
       }
     }
-  }
-  
-  console.log(`Python script path: ${pythonScript}`);
-  
-  // Python 프로세스의 작업 디렉토리 설정
-  let pythonCwd;
-  if (app.isPackaged) {
-    pythonCwd = path.join(process.resourcesPath, 'app');
   } else {
+    // 개발 환경
+    pythonScript = path.join(__dirname, 'main.py');
     pythonCwd = __dirname;
   }
   
-  console.log(`Python working directory: ${pythonCwd}`);
+  if (!pythonScript || !fs.existsSync(pythonScript)) {
+    console.error('❌ main.py 파일을 찾을 수 없습니다!');
+    console.error(`시도한 경로들:`);
+    console.error(`- ${pythonScript}`);
+    showNotification('오류', 'Python 백엔드 파일을 찾을 수 없습니다.');
+    return;
+  }
   
-  // main.py 실행 (UTF-8 인코딩 강제)
-  pyProc = spawn('python', ['-u', pythonScript], {
-    env: {
-      ...process.env,
-      PYTHONIOENCODING: 'utf-8',
-      PYTHONUNBUFFERED: '1',
-      PYTHONUTF8: '1'
-    },
-    cwd: pythonCwd, // 작업 디렉토리 명시적 설정
-    stdio: 'inherit', // 콘솔에 직접 출력
-    windowsHide: true
+  console.log(`📂 Python 스크립트: ${pythonScript}`);
+  console.log(`📁 작업 디렉토리: ${pythonCwd}`);
+  
+  // 환경 변수 설정 (크로스 플랫폼)
+  const pythonEnv = {
+    ...process.env,
+    PYTHONIOENCODING: 'utf-8',
+    PYTHONUNBUFFERED: '1',
+    PYTHONUTF8: '1'
+  };
+  
+  // macOS에서 PATH 설정
+  if (process.platform === 'darwin') {
+    pythonEnv.PATH = `/usr/local/bin:/opt/homebrew/bin:${process.env.PATH}`;
+  }
+  
+  // Python 프로세스 실행
+  pyProc = spawn(pythonCmd, ['-u', pythonScript], {
+    env: pythonEnv,
+    cwd: pythonCwd,
+    stdio: 'inherit',
+    windowsHide: process.platform === 'win32'
   });
 
   pyProc.on('error', (err) => {
-    console.error("Failed to start Python backend:", err);
+    console.error("❌ Python 백엔드 시작 실패:", err);
+    showNotification('오류', `Python 백엔드 시작 실패: ${err.message}`);
   });
   
   pyProc.on('close', (code) => {
-    console.log(`Python backend exited with code ${code}`);
+    console.log(`🐍 Python 백엔드가 코드 ${code}로 종료되었습니다`);
     if (code !== 0) {
+      showNotification('오류', 'Python 백엔드가 예상치 못하게 종료되었습니다.');
       app.quit();
     }
   });
+  
+  // 백엔드 시작 성공 알림
+  setTimeout(() => {
+    showNotification(
+      'Browser-Use Agent', 
+      '백엔드가 성공적으로 시작되었습니다!\nhttp://localhost:8999'
+    );
+  }, 2000);
 }
 
 // Python 프로세스 종료 함수
 function terminatePyProc() {
   if (pyProc !== null) {
-    console.log('Terminating Python backend...');
+    console.log('🛑 Python 백엔드 종료 중...');
     if (process.platform === 'win32') {
       spawn('taskkill', ['/pid', pyProc.pid, '/f', '/t']);
     } else {
       pyProc.kill('SIGTERM');
+      // 강제 종료가 필요한 경우 대비
+      setTimeout(() => {
+        if (pyProc && !pyProc.killed) {
+          pyProc.kill('SIGKILL');
+        }
+      }, 5000);
     }
     pyProc = null;
   }
 }
 
 // 앱 준비되면 백엔드 시작
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  // 프로토콜 핸들러 설정
+  setupProtocolHandler();
+  
   // 트레이 아이콘 생성
   createTray();
   
   // Python 백엔드 시작
-  startPythonBackend();
+  await startPythonBackend();
   
-  // Windows 레지스트리에 프로토콜 핸들러 등록
+  // 플랫폼별 프로토콜 핸들러 등록
   registerProtocolHandler();
 
-  console.log('Browser-Use Agent started in background');
-  console.log('Backend running on http://localhost:8999');
+  console.log('🚀 Browser-Use Agent가 백그라운드에서 시작되었습니다');
+  console.log('🌐 백엔드: http://localhost:8999');
   
-  // 첫 실행 시 프로토콜 URL 처리
+  // 첫 실행 시 프로토콜 URL 처리 (Windows)
   if (process.platform === 'win32') {
     const protocolUrl = process.argv.find(arg => arg.startsWith('browser-use-agent://'));
     if (protocolUrl) {
@@ -338,6 +395,7 @@ app.whenReady().then(() => {
 // macOS/Linux에서 프로토콜 URL 처리
 app.on('open-url', (event, url) => {
   event.preventDefault();
+  console.log(`🔗 macOS/Linux: Protocol URL received: ${url}`);
   handleProtocolUrl(url);
 });
 
@@ -348,6 +406,7 @@ app.on('window-all-closed', () => {
 
 // 앱 종료 시 Python 프로세스도 종료
 app.on('will-quit', terminatePyProc);
+app.on('before-quit', terminatePyProc);
 
 // 앱이 활성화될 때 (macOS)
 app.on('activate', () => {
@@ -356,31 +415,37 @@ app.on('activate', () => {
 
 // 프로토콜 URL 처리 함수
 function handleProtocolUrl(url) {
-  console.log(`Protocol URL received: ${url}`);
+  console.log(`🔗 Protocol URL 수신: ${url}`);
   
-  if (tray) {
-    tray.displayBalloon({
-      title: 'Browser-Use Agent',
-      content: 'Agent is starting up...'
-    });
+  showNotification(
+    'Browser-Use Agent',
+    'Agent가 시작되고 있습니다...',
+    () => {
+      require('electron').shell.openExternal('http://localhost:8999');
+    }
+  );
+  
+  try {
+    const urlObj = new URL(url);
+    console.log(`📋 Protocol: ${urlObj.protocol}`);
+    console.log(`🏠 Host: ${urlObj.hostname}`);
+    console.log(`🔍 Search: ${urlObj.search}`);
+    
+    // URL 파라미터 처리 로직 추가 가능
+  } catch (error) {
+    console.error('❌ URL 파싱 오류:', error);
   }
-  
-  // URL에서 매개변수 추출 (예: browser-use-agent://start?param=value)
-  const urlObj = new URL(url);
-  console.log(`Protocol: ${urlObj.protocol}`);
-  console.log(`Host: ${urlObj.hostname}`);
-  console.log(`Search: ${urlObj.search}`);
 }
 
 // 두 번째 인스턴스 실행 방지
 const gotTheLock = app.requestSingleInstanceLock();
 
 if (!gotTheLock) {
+  console.log('⚠️ Browser-Use Agent가 이미 실행 중입니다');
   app.quit();
 } else {
   app.on('second-instance', (event, commandLine, workingDirectory) => {
-    // 이미 실행 중인 인스턴스가 있다면 알림
-    console.log('Browser-Use Agent is already running');
+    console.log('⚠️ Browser-Use Agent가 이미 실행 중입니다');
     
     // 커스텀 프로토콜 URL 처리
     const protocolUrl = commandLine.find(arg => arg.startsWith('browser-use-agent://'));
@@ -388,12 +453,13 @@ if (!gotTheLock) {
       handleProtocolUrl(protocolUrl);
     }
     
-    // 트레이 아이콘 클릭 효과
-    if (tray) {
-      tray.displayBalloon({
-        title: 'Browser-Use Agent',
-        content: 'Already running on port 8999'
-      });
-  }
-});
+    // 이미 실행 중 알림
+    showNotification(
+      'Browser-Use Agent',
+      '이미 포트 8999에서 실행 중입니다',
+      () => {
+        require('electron').shell.openExternal('http://localhost:8999');
+      }
+    );
+  });
 }

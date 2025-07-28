@@ -39,3 +39,7 @@ The system now supports Google account credentials through environment variables
 - `GOOGLE_PASSWORD`: Your Google account password
 
 These credentials are automatically loaded and made available to the agent for Google service authentication tasks.
+
+
+npm run build:win
+"C:\Program Files (x86)\NSIS\makensis.exe" installer.nsi

@@ -1,5 +1,5 @@
 // main.js (헤드리스 일렉트론 앱 - main.py 실행용)
-const { app, Tray, Menu, nativeImage, Notification } = require('electron');
+const { app, Tray, Menu, nativeImage } = require('electron');
 const { spawn, exec } = require('child_process');
 const path = require('path');
 const fs = require('fs');
@@ -201,25 +201,7 @@ function createTray() {
   }
 }
 
-// 크로스 플랫폼 알림 표시
-function showNotification(title, body, onClick = null) {
-  if (Notification.isSupported()) {
-    const notification = new Notification({
-      title: title,
-      body: body,
-      silent: false
-    });
-    
-    if (onClick) {
-      notification.on('click', onClick);
-    }
-    
-    notification.show();
-  } else {
-    // Notification이 지원되지 않는 경우 콘솔에 출력
-    console.log(`📢 ${title}: ${body}`);
-  }
-}
+// 알림 기능 제거됨 - 콘솔 로그만 사용
 
 // Python 실행 파일 찾기 (크로스 플랫폼)
 function findPython() {
@@ -259,7 +241,7 @@ async function startPythonBackend() {
   const pythonCmd = await findPython();
   if (!pythonCmd) {
     console.error('❌ Python이 설치되지 않았습니다!');
-    showNotification('오류', 'Python이 설치되지 않았습니다. Python 3.7 이상을 설치해주세요.');
+    console.error('⚠️ Python 3.7 이상을 설치해주세요.');
     return;
   }
   
@@ -297,7 +279,7 @@ async function startPythonBackend() {
     console.error('❌ main.py 파일을 찾을 수 없습니다!');
     console.error(`시도한 경로들:`);
     console.error(`- ${pythonScript}`);
-    showNotification('오류', 'Python 백엔드 파일을 찾을 수 없습니다.');
+    console.error('⚠️ Python 백엔드 파일을 찾을 수 없습니다.');
     return;
   }
   
@@ -327,23 +309,20 @@ async function startPythonBackend() {
 
   pyProc.on('error', (err) => {
     console.error("❌ Python 백엔드 시작 실패:", err);
-    showNotification('오류', `Python 백엔드 시작 실패: ${err.message}`);
+    console.error(`⚠️ Python 백엔드 시작 실패: ${err.message}`);
   });
   
   pyProc.on('close', (code) => {
     console.log(`🐍 Python 백엔드가 코드 ${code}로 종료되었습니다`);
     if (code !== 0) {
-      showNotification('오류', 'Python 백엔드가 예상치 못하게 종료되었습니다.');
+      console.error('⚠️ Python 백엔드가 예상치 못하게 종료되었습니다.');
       app.quit();
     }
   });
   
-  // 백엔드 시작 성공 알림
+  // 백엔드 시작 성공 로그
   setTimeout(() => {
-    showNotification(
-      'Browser-Use Agent', 
-      '백엔드가 성공적으로 시작되었습니다!\nhttp://localhost:8999'
-    );
+    console.log('✅ 백엔드가 성공적으로 시작되었습니다! http://localhost:8999');
   }, 2000);
 }
 
@@ -416,14 +395,7 @@ app.on('activate', () => {
 // 프로토콜 URL 처리 함수
 function handleProtocolUrl(url) {
   console.log(`🔗 Protocol URL 수신: ${url}`);
-  
-  showNotification(
-    'Browser-Use Agent',
-    'Agent가 시작되고 있습니다...',
-    () => {
-      require('electron').shell.openExternal('http://localhost:8999');
-    }
-  );
+  console.log('🚀 Agent가 준비되었습니다 (백그라운드 실행)');
   
   try {
     const urlObj = new URL(url);
@@ -453,13 +425,7 @@ if (!gotTheLock) {
       handleProtocolUrl(protocolUrl);
     }
     
-    // 이미 실행 중 알림
-    showNotification(
-      'Browser-Use Agent',
-      '이미 포트 8999에서 실행 중입니다',
-      () => {
-        require('electron').shell.openExternal('http://localhost:8999');
-      }
-    );
+    // 이미 실행 중 로그
+    console.log('⚠️ Browser-Use Agent가 이미 포트 8999에서 실행 중입니다 (백그라운드)');
   });
 }

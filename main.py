@@ -6,12 +6,64 @@ import sys
 import logging
 import threading
 import time
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from browser_use import Agent, Browser, BrowserConfig, BrowserContext, ChatOpenAI
-from dotenv import load_dotenv
 import json
+import subprocess
+
+# 의존성 자동 설치 함수
+def install_dependencies_sync():
+    """동기식 의존성 설치"""
+    print("🔍 Checking Python dependencies...", flush=True)
+    
+    core_packages = [
+        'fastapi', 'uvicorn', 'websockets', 'python-multipart',
+        'httpx', 'pydantic', 'python-dotenv', 'requests',
+        'playwright', 'browser-use'
+    ]
+    
+    missing_packages = []
+    
+    for package in core_packages:
+        try:
+            pkg_name = package.split('>=')[0].split('==')[0].split('<')[0]
+            __import__(pkg_name.replace('-', '_'))
+        except ImportError:
+            missing_packages.append(package)
+    
+    if missing_packages:
+        print(f"📦 Installing missing packages: {', '.join(missing_packages)}", flush=True)
+        
+        for package in missing_packages:
+            try:
+                print(f"Installing {package}...", flush=True)
+                pip_args = [sys.executable, "-m", "pip", "install", package, "--break-system-packages"]
+                
+                result = subprocess.run(pip_args, capture_output=True, text=True, timeout=300)
+                
+                if result.returncode == 0:
+                    print(f"✅ {package} installed successfully!", flush=True)
+                else:
+                    print(f"⚠️ Failed to install {package}: {result.stderr}", flush=True)
+                    
+            except Exception as e:
+                print(f"⚠️ Error installing {package}: {str(e)}", flush=True)
+    else:
+        print("✅ All core dependencies are available", flush=True)
+
+# 시작 시 의존성 설치
+install_dependencies_sync()
+
+# 이제 안전하게 import 가능
+try:
+    from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+    from fastapi.middleware.cors import CORSMiddleware
+    from pydantic import BaseModel
+    from browser_use import Agent, Browser, BrowserConfig, BrowserContext, ChatOpenAI
+    from dotenv import load_dotenv
+    load_dotenv()
+    print("✅ All imports successful", flush=True)
+except ImportError as e:
+    print(f"❌ Import failed even after installation: {e}", flush=True)
+    sys.exit(1)
 
 # UTF-8 인코딩 강제 설정
 os.environ['PYTHONIOENCODING'] = 'utf-8'
@@ -423,6 +475,86 @@ async def check_and_install_playwright():
         print("Trying system Chrome as fallback...", flush=True)
         setup_system_chrome()
 
+async def check_and_install_dependencies():
+    """Python 의존성 패키지 설치 확인 및 설치"""
+    try:
+        import subprocess
+        import importlib
+        from pathlib import Path
+        
+        print("Checking Python dependencies...", flush=True)
+        
+        # requirements.txt 파일 경로 찾기
+        requirements_file = None
+        possible_paths = [
+            Path(__file__).parent / "requirements.txt",
+            Path.cwd() / "requirements.txt",
+        ]
+        
+        for path in possible_paths:
+            if path.exists():
+                requirements_file = path
+                break
+        
+        if not requirements_file:
+            print("⚠️ requirements.txt not found, skipping dependency check", flush=True)
+            return
+        
+        # 핵심 패키지들만 확인 (선택적 설치)
+        core_packages = [
+            'fastapi', 'uvicorn', 'websockets', 'python-multipart',
+            'httpx', 'pydantic', 'python-dotenv', 'requests',
+            'playwright', 'browser-use'
+        ]
+        
+        missing_packages = []
+        
+        # 핵심 패키지 설치 상태 확인
+        for package in core_packages:
+            try:
+                # 패키지명에서 버전 정보 제거
+                pkg_name = package.split('>=')[0].split('==')[0].split('<')[0]
+                importlib.import_module(pkg_name.replace('-', '_'))
+            except ImportError:
+                missing_packages.append(package)
+        
+        if missing_packages:
+            print(f"Installing missing packages: {', '.join(missing_packages)}", flush=True)
+            print("This may take a few minutes...", flush=True)
+            
+            # pip로 핵심 패키지들 설치
+            for package in missing_packages:
+                try:
+                    print(f"Installing {package}...", flush=True)
+                    # macOS Sequoia PEP 668 정책 우회
+                    pip_args = [sys.executable, "-m", "pip", "install", package]
+                    
+                    # 시스템 보호된 환경에서 강제 설치
+                    pip_args.append("--break-system-packages")
+                    
+                    result = subprocess.run(
+                        pip_args,
+                        capture_output=True,
+                        text=True,
+                        timeout=300  # 5분 제한
+                    )
+                    
+                    if result.returncode == 0:
+                        print(f"✅ {package} installed successfully!", flush=True)
+                    else:
+                        print(f"⚠️ Failed to install {package}: {result.stderr}", flush=True)
+                        
+                except subprocess.TimeoutExpired:
+                    print(f"⚠️ Installation of {package} timed out", flush=True)
+                except Exception as e:
+                    print(f"⚠️ Error installing {package}: {str(e)}", flush=True)
+        else:
+            print("✅ All core Python dependencies are available", flush=True)
+            
+    except Exception as e:
+        print(f"⚠️ Dependency check error: {str(e)}", flush=True)
+        print("Continuing with available packages...", flush=True)
+
 def setup_system_chrome():
     """시스템 Chrome 설정"""
     try:
@@ -448,30 +580,9 @@ def setup_system_chrome():
         print(f"⚠️ System Chrome setup error: {str(e)}", flush=True)
         return False
 
-@app.on_event("startup")
-async def startup_event():
-    """서버 시작시 Playwright 설치 확인 및 브라우저 초기화"""
-    print("Starting Browser Agent API Server...", flush=True)
-    
-    # Playwright 브라우저 설치 확인 및 설치
-    await check_and_install_playwright()
-    
-    # 브라우저 초기화
-    await init_browser()
-    print("Browser Agent API Server is ready!", flush=True)
+# 기존 라우트들 제거됨 - setup_routes 함수에서 동적으로 설정
 
-@app.on_event("shutdown")
-async def shutdown_event():
-    """서버 종료시 브라우저 정리"""
-    global browser
-    if browser:
-        await browser.close()
-        print("Browser closed", flush=True)
-
-@app.get("/")
-async def root():
-    """서버 상태 확인"""
-    return {"message": "Browser Agent API Server is running"}
+# 라우트 제거됨
 
 @app.get("/health")
 async def health_check():
@@ -762,4 +873,5 @@ async def execute_command(request: CommandRequest):
 
 if __name__ == "__main__":
     import uvicorn
+    print("🚀 Starting Browser-Use Agent Server...", flush=True)
     uvicorn.run(app, host="0.0.0.0", port=8999, log_level="info") 
